@@ -1,0 +1,319 @@
+---
+title: "DMP Final Proj"
+author: "Satish"
+date: "12/10/2017"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Dog Breed Idenfication
+
+# Installing the required packages
+
+```{r, eval=FALSE}
+
+install.packages("hash")
+
+install.packages("devtools")
+devtools::install_github("rstudio/keras")
+library(keras)
+install_keras()
+
+install.packages("abind")
+
+install.packages("forcats")
+
+
+```
+
+
+
+```{r, warning=FALSE, message=FALSE}
+
+library(hash)
+library(abind)
+library(tidyverse)
+library(forcats)
+
+```
+
+
+
+# Pre-processing & Exploratory Data Analysis
+
+```{r}
+
+# Getting the distinct dog breeds
+dir_names <- list.dirs(path = "/Users/satishreddychirra/Document/Data Management & Processing/Project Files/Images", full.names = F, recursive = F)
+
+dog_breeds <- sapply(1:length(dir_names), function(x) 
+  {tolower(gsub("_", " ", strsplit(dir_names[x], "-")[[1]][2]))})
+
+cls <- hash(dog_breeds, 0:119)
+df_cls <- data.frame(class=0:119, dog_breeds)
+
+
+# Getting images and corresponding classes
+dir_names <- list.dirs(path = "/Users/satishreddychirra/Document/Data Management & Processing/Project Files/Images", full.names = T, recursive = F)
+
+img_cls <- sapply(1:length(dir_names), function(x) 
+  { dire <- tolower(gsub("_", " ", strsplit(strsplit(dir_names[x], "/")[[1]][8], "-")[[1]][2]))
+  len <- length(list.files(dir_names[x]))
+  cls_num <- cls[[dire]]
+  c(cls_num, len) })
+
+class_count <- data.frame(class=img_cls[1,], count=img_cls[2,])
+
+df <- merge(df_cls, class_count)
+
+t <- separate(df, count, into = c("test", "train"))
+t$test <- as.integer(t$test)-100
+t$train <- as.integer(100)
+tf <- gather(t, data, count, 3:4 )
+tf <- tf %>% arrange(class)
+
+tf$count <- as.integer(tf$count)
+
+# Data Split
+tf %>%
+  ggplot() + geom_col(aes(x=class, y=count, fill=data)) +
+  guides(fill=guide_legend(title="split"))
+
+# Popular Breeds
+temp <- df %>% arrange(desc(count)) %>% head(5)
+temp <- as.data.frame(temp)
+
+a <- tf %>% filter(dog_breeds %in% temp$dog_breeds) 
+ggplot(a) + geom_col(aes(x=dog_breeds, y=count, fill=forcats::fct_rev(data))) +
+  guides(fill=guide_legend(title="split")) 
+
+
+# Rare Breeds
+temp_r <- df %>% arrange(desc(count)) %>% tail(5)
+temp_r <- as.data.frame(temp_r)
+
+b <- tf %>% filter(dog_breeds %in% temp_r$dog_breeds) 
+ggplot(b) + geom_col(aes(x=dog_breeds, y=count, fill=forcats::fct_rev(data))) +
+  guides(fill=guide_legend(title="split")) 
+
+```
+
+
+```{python}
+
+# Using python to split the train and test data.
+
+import os
+import random
+dir = '/Users/satishreddychirra/Document/Data Management & Processing/Project Files/Images'
+dir2 = '/Users/satishreddychirra/Document/Data Management & Processing/Project Files/Train_Images'
+
+count=-1
+for filename in os.listdir(dir):
+    count+=1
+    directory=os.path.join(dir2,str(count))
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+    for file in random.sample(os.listdir(os.path.join(dir,filename)), 100):
+        old_path=os.path.join(dir,filename,file)
+        new_path=os.path.join(directory,file)
+        os.rename(old_path, new_path)
+    os.rename(os.path.join(dir,filename),os.path.join(dir,str(count)))
+    print(count)
+    
+```
+
+
+
+# Model Building 
+
+```{r}
+
+model<-keras_model_sequential()
+
+
+# Model
+model %>%
+  layer_conv_2d(filter=32,kernel_size=c(3,3),padding="same",
+                input_shape=c(64,64,3)) %>%
+  layer_activation("relu") %>%
+  layer_conv_2d(filter=32,kernel_size=c(3,3)) %>%
+  layer_activation("relu") %>%
+  layer_max_pooling_2d(pool_size=c(2,2)) %>%
+
+  layer_conv_2d(filter=64 , kernel_size=c(3,3),padding="same") %>%
+  layer_activation("relu") %>%
+  layer_conv_2d(filter=64,kernel_size=c(3,3) ) %>%
+  layer_activation("relu") %>%
+  layer_max_pooling_2d(pool_size=c(2,2)) %>%
+
+  layer_conv_2d(filter=128 , kernel_size=c(3,3),padding="same") %>%
+  layer_activation("relu") %>%
+  layer_conv_2d(filter=128,kernel_size=c(3,3) ) %>%
+  layer_activation("relu") %>%
+  layer_max_pooling_2d(pool_size=c(2,2)) %>%
+
+  # flatten the input
+  layer_flatten() %>%
+  layer_dense(512) %>%
+  layer_activation("relu") %>%
+  layer_dropout(0.5) %>%
+  layer_dense(120) %>%
+  # Applying softmax nonlinear activation function to the output layer to calculate cross-entropy
+  layer_activation("softmax") 
+
+
+# Optimizer 
+opt <- optimizer_rmsprop(lr = 0.0001, decay = 1e-6)
+
+# Model Compiling
+model %>% compile(
+  loss = "categorical_crossentropy",
+  optimizer = opt,
+  metrics = "accuracy"
+)
+
+# Summary of the Model
+summary(model)
+
+
+```
+
+
+# Model Training & Test Accuracy
+
+```{r}
+
+# Defining the batch size
+batch_size=128
+
+# Adding noise by a random combination of zoom and horizontal flip
+train_datagen <- image_data_generator(rescale = 1/255,shear_range = 0.2,zoom_range = 0.2,horizontal_flip = TRUE)
+
+# Rescaling the data
+test_datagen <- image_data_generator(rescale = 1/255)
+
+# 
+train_generator <- flow_images_from_directory('/Users/satishreddychirra/Document/Data Management & Processing/Project Files/Train_Images', train_datagen, target_size = c(64,64), batch_size=128, shuffle = TRUE)
+
+
+test_generator <- flow_images_from_directory('/Users/satishreddychirra/Document/Data Management & Processing/Project Files/Test_Images', test_datagen, target_size = c(64,64), batch_size=128, shuffle = TRUE)
+
+
+# Training the model
+train <- model %>% fit_generator(train_generator,steps_per_epoch = as.integer(12000/batch_size),epochs = 1000,validation_data = test_generator ,validation_steps = as.integer(8580/batch_size))
+
+
+plot(train)
+
+```
+
+
+
+
+# Using a pre-trained model InceptionV3
+
+```{r}
+
+# InceptionV3 model from Keras
+model <- application_inception_v3(weights = 'imagenet', include_top = F, classes = 120, pooling = 'max')
+
+
+# Adding the custom layers
+predictions <- model$output %>% 
+  layer_dense(units = 1024, activation = 'relu') %>% 
+  layer_dense(units = 120, activation = 'softmax')
+
+
+# Model to be trained
+model <- keras_model(inputs = model$input, outputs = predictions)
+
+
+# Freezing convolutional layers
+freeze_weights(model)
+
+
+# compiling the model
+model %>% compile(
+  loss = "binary_crossentropy",
+  optimizer = optimizer_sgd(lr = 0.0001, momentum = 0.9, decay = 1e-5),
+  metrics = "accuracy"
+)
+
+
+batch_size=128
+
+train_datagen <- image_data_generator(rescale = 1/255)
+test_datagen <- image_data_generator(rescale = 1/255)
+
+
+train_generator <- flow_images_from_directory('/Users/satishreddychirra/Document/Data Management & Processing/Project Files/Train_Images',train_datagen,target_size = c(128,128),batch_size=128,shuffle = TRUE)
+
+
+test_generator <- flow_images_from_directory('/Users/satishreddychirra/Document/Data Management & Processing/Project Files/Test_Images',test_datagen,target_size = c(128,128),batch_size=128,shuffle = TRUE)
+
+# Training the model
+model %>% fit_generator(train_generator,steps_per_epoch = as.integer(12000/batch_size),epochs = 10,validation_data = test_generator ,validation_steps = as.integer(8580/batch_size))
+
+
+# Training top two Inception blocks
+freeze_weights(model, from = 1, to = 172)
+unfreeze_weights(model, from = 173)
+
+# Optimizer 
+opt <- optimizer_rmsprop(lr = 0.0001, decay = 1e-6)
+
+# compile the model
+model %>% compile(
+  loss = "categorical_crossentropy",
+  optimizer = opt,
+  metrics = "accuracy"
+)
+
+# Training the model again
+model %>% fit_generator(train_generator,steps_per_epoch = as.integer(12000/batch_size),epochs = 10,validation_data = test_generator ,validation_steps = as.integer(8580/batch_size))
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
