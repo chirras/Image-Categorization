@@ -36,7 +36,7 @@ has shown to work better in practice. The final layer is a Fully Connected layer
 function in the output layer. The purpose of the Fully Connected layer is to use the features extracted by the
 previous layers to classify the input image into various classes based on the training dataset.
 
-	We have taken the pre-trained InceptionV3 model excluding the top layer, and fine-tuned it on our set of
+We have taken the pre-trained InceptionV3 model excluding the top layer, and fine-tuned it on our set of
 classes (120) by adding a ’Relu’,’Softmax’ layer on top of it. In order to input the images into a InceptionV3
 model we have converted the test images to 128*128 pixels. Once the images are converted and model weights
 are freezed, we used the model to predict the accuracy on test dataset.
